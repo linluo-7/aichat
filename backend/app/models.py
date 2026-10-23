@@ -17,12 +17,54 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 
+class User(Base):
+    """【账号】登录用户表。"""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, comment="登录用户名")
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False, comment="密码哈希")
+    is_admin: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0", comment="是否管理员"
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="1", comment="是否启用"
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class InviteCode(Base):
+    """【账号】邀请码表（一次性）。"""
+
+    __tablename__ = "invite_codes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, comment="邀请码")
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, comment="创建人"
+    )
+    used_by_user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, comment="使用人"
+    )
+    used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, comment="使用时间"
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class UserProfile(Base):
-    """【聊天】当前登录用户（单机版唯一一行，id 固定为 1）。"""
+    """【聊天】用户资料（昵称/头像，每用户一行）。"""
 
     __tablename__ = "user_profile"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=True, comment="所属用户"
+    )
     nickname: Mapped[str] = mapped_column(String(64), default="我", comment="我的昵称")
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True, comment="我的头像")
 
@@ -33,6 +75,9 @@ class Contact(Base):
     __tablename__ = "contacts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True, comment="所属用户"
+    )
     name: Mapped[str] = mapped_column(String(64), nullable=False, comment="显示名称")
     persona: Mapped[str] = mapped_column(Text, default="", comment="角色设定/系统提示")
     api_key: Mapped[str] = mapped_column(String(256), nullable=False, comment="DeepSeek API Key")

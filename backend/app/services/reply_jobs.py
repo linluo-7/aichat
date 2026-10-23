@@ -203,30 +203,45 @@ async def retry_failed_job(db: AsyncSession, job_id: int) -> ReplyJob:
     return job
 
 
-async def list_busy_contact_ids(db: AsyncSession) -> list[int]:
+async def list_busy_contact_ids(db: AsyncSession, *, user_id: int) -> list[int]:
     """有待回复任务（pending/running）的联系人：用于前端保持快速轮询。"""
+    from app.models import Contact
+
     result = await db.execute(
         select(ReplyJob.contact_id)
-        .where(ReplyJob.status.in_(["pending", "running"]))
+        .join(Contact, Contact.id == ReplyJob.contact_id)
+        .where(
+            ReplyJob.status.in_(["pending", "running"]),
+            Contact.user_id == user_id,
+        )
         .distinct()
     )
     return [row[0] for row in result.all()]
 
 
-async def list_typing_contact_ids(db: AsyncSession) -> list[int]:
+async def list_typing_contact_ids(db: AsyncSession, *, user_id: int) -> list[int]:
     """
     正在输入：任意 pending/running 任务。
     无流式时生成窗口短，合并等待期也显示，避免提示几乎看不见。
     """
-    return await list_busy_contact_ids(db)
+    return await list_busy_contact_ids(db, user_id=user_id)
 
 
-async def list_recent_failed_jobs(db: AsyncSession, *, hours: int = 24) -> list[ReplyJob]:
-    """最近失败任务。"""
+async def list_recent_failed_jobs(
+    db: AsyncSession, *, user_id: int, hours: int = 24
+) -> list[ReplyJob]:
+    """最近失败任务（仅当前用户联系人）。"""
+    from app.models import Contact
+
     since = utc_now() - timedelta(hours=hours)
     result = await db.execute(
         select(ReplyJob)
-        .where(ReplyJob.status == "failed", ReplyJob.updated_at >= since)
+        .join(Contact, Contact.id == ReplyJob.contact_id)
+        .where(
+            ReplyJob.status == "failed",
+            ReplyJob.updated_at >= since,
+            Contact.user_id == user_id,
+        )
         .order_by(ReplyJob.updated_at.desc())
         .limit(50)
     )

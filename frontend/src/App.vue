@@ -1,5 +1,6 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import AuthPage from './components/AuthPage.vue'
 import ChatPanel from './components/ChatPanel.vue'
 import ContactSidebar from './components/ContactSidebar.vue'
 import CreateContactModal from './components/CreateContactModal.vue'
@@ -10,9 +11,11 @@ import MemoryPage from './components/MemoryPage.vue'
 import UpdatePrompt from './components/UpdatePrompt.vue'
 import { useMobile } from './composables/useMobile'
 import { useSync } from './composables/useSync'
+import { useAuthStore } from './stores/auth'
 import { useChatStore } from './stores/chat'
 import { useProfileStore } from './stores/profile'
 
+const auth = useAuthStore()
 const store = useChatStore()
 const profile = useProfileStore()
 const { isMobile } = useMobile()
@@ -22,6 +25,7 @@ const showProfile = ref(false)
 const detailContactId = ref(null)
 const editContactId = ref(null)
 const memoryContactId = ref(null)
+const syncEnabled = computed(() => auth.isLoggedIn)
 
 const showSidebar = computed(
   () =>
@@ -65,16 +69,45 @@ function closeMemory() {
   memoryContactId.value = null
 }
 
-useSync(store)
+function onUnauthorized() {
+  auth.logout()
+  store.$reset()
+  localStorage.removeItem('aichat_last_sync_id')
+  detailContactId.value = null
+  memoryContactId.value = null
+  editContactId.value = null
+  showProfile.value = false
+  showCreate.value = false
+}
 
-onMounted(() => {
-  profile.fetchProfile()
-  store.fetchContacts()
+async function afterLogin() {
+  await profile.fetchProfile()
+  await store.fetchContacts()
+}
+
+useSync(store, { enabled: syncEnabled })
+
+watch(
+  () => auth.isLoggedIn,
+  async (ok) => {
+    if (ok) await afterLogin()
+  },
+)
+
+onMounted(async () => {
+  window.addEventListener('aichat:unauthorized', onUnauthorized)
+  await auth.bootstrap()
+  if (auth.isLoggedIn) await afterLogin()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('aichat:unauthorized', onUnauthorized)
 })
 </script>
 
 <template>
-  <div class="wx-app" :class="{ 'is-mobile': isMobile }">
+  <AuthPage v-if="auth.bootstrapped && !auth.isLoggedIn" @done="afterLogin" />
+  <div v-else-if="auth.isLoggedIn" class="wx-app" :class="{ 'is-mobile': isMobile }">
     <UpdatePrompt />
     <ContactSidebar
       v-show="showSidebar"
@@ -131,9 +164,18 @@ onMounted(() => {
       @close="editContactId = null"
     />
   </div>
+  <div v-else class="boot-splash">加载中…</div>
 </template>
 
 <style scoped>
+.boot-splash {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #888;
+  font-size: 14px;
+}
 .wx-app {
   display: flex;
   height: 100vh;

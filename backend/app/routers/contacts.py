@@ -6,8 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.models import Contact
+from app.deps import get_current_user, get_owned_contact
+from app.models import Contact, User
 from app.schemas import ContactCreate, ContactListItem, ContactOut, ContactUpdate
+from app.services.auth import mask_api_key
 from app.services.contact_list import fetch_contacts_with_last_message
 from app.services.files import save_upload
 from app.services.memory_store import count_unseen
@@ -17,11 +19,12 @@ router = APIRouter(prefix="/api/contacts", tags=["contacts"])
 
 
 def _contact_out(c: Contact, *, memory_unseen: int = 0) -> ContactOut:
-    """组装联系人输出。"""
+    """组装联系人输出（含 Key 掩码）。"""
     return ContactOut(
         id=c.id,
         name=c.name,
         persona=c.persona,
+        api_key_masked=mask_api_key(c.api_key),
         avatar_url=c.avatar_url,
         chat_background_url=c.chat_background_url,
         chat_background_mobile_url=c.chat_background_mobile_url,
@@ -36,9 +39,12 @@ def _contact_out(c: Contact, *, memory_unseen: int = 0) -> ContactOut:
 
 
 @router.get("", response_model=list[ContactListItem])
-async def list_contacts(db: AsyncSession = Depends(get_db)) -> list[ContactListItem]:
-    """列出全部联系人（含最近消息摘要，按最近聊天排序）。"""
-    rows = await fetch_contacts_with_last_message(db)
+async def list_contacts(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[ContactListItem]:
+    """列出当前用户的联系人（含最近消息摘要）。"""
+    rows = await fetch_contacts_with_last_message(db, user_id=user.id)
     out: list[ContactListItem] = []
     for c, preview, last_at in rows:
         unseen = await count_unseen(db, c.id) if getattr(c, "memory_enabled", True) else 0
@@ -48,6 +54,7 @@ async def list_contacts(db: AsyncSession = Depends(get_db)) -> list[ContactListI
                 id=base.id,
                 name=base.name,
                 persona=base.persona,
+                api_key_masked=base.api_key_masked,
                 avatar_url=base.avatar_url,
                 chat_background_url=base.chat_background_url,
                 chat_background_mobile_url=base.chat_background_mobile_url,
@@ -66,9 +73,14 @@ async def list_contacts(db: AsyncSession = Depends(get_db)) -> list[ContactListI
 
 
 @router.post("", response_model=ContactOut)
-async def create_contact(body: ContactCreate, db: AsyncSession = Depends(get_db)) -> ContactOut:
+async def create_contact(
+    body: ContactCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ContactOut:
     """创建新联系人。"""
     contact = Contact(
+        user_id=user.id,
         name=body.name.strip(),
         persona=body.persona.strip(),
         api_key=body.api_key.strip(),
@@ -81,29 +93,31 @@ async def create_contact(body: ContactCreate, db: AsyncSession = Depends(get_db)
 
 
 @router.get("/{contact_id}", response_model=ContactOut)
-async def get_contact(contact_id: int, db: AsyncSession = Depends(get_db)) -> ContactOut:
+async def get_contact(
+    contact: Contact = Depends(get_owned_contact),
+    db: AsyncSession = Depends(get_db),
+) -> ContactOut:
     """获取单个联系人详情。"""
-    contact = await db.get(Contact, contact_id)
-    if not contact:
-        raise HTTPException(status_code=404, detail="联系人不存在")
     unseen = await count_unseen(db, contact.id) if contact.memory_enabled else 0
     return _contact_out(contact, memory_unseen=unseen)
 
 
 @router.patch("/{contact_id}", response_model=ContactOut)
 async def update_contact(
-    contact_id: int, body: ContactUpdate, db: AsyncSession = Depends(get_db)
+    body: ContactUpdate,
+    contact: Contact = Depends(get_owned_contact),
+    db: AsyncSession = Depends(get_db),
 ) -> ContactOut:
-    """更新联系人名称、设定、API Key、模型与自动消息等。"""
-    contact = await db.get(Contact, contact_id)
-    if not contact:
-        raise HTTPException(status_code=404, detail="联系人不存在")
+    """更新联系人名称、设定、API Key、自动消息等。"""
     if body.name is not None:
         contact.name = body.name.strip()
     if body.persona is not None:
         contact.persona = body.persona.strip()
-    if body.api_key is not None:
-        contact.api_key = body.api_key.strip()
+    if body.api_key is not None and body.api_key.strip():
+        key = body.api_key.strip()
+        if len(key) < 8:
+            raise HTTPException(status_code=400, detail="API Key 至少 8 位")
+        contact.api_key = key
     if body.memory_enabled is not None:
         contact.memory_enabled = body.memory_enabled
     if body.auto_message_interval_minutes is not None:
@@ -131,11 +145,11 @@ async def update_contact(
 
 
 @router.delete("/{contact_id}")
-async def delete_contact(contact_id: int, db: AsyncSession = Depends(get_db)) -> dict[str, str]:
+async def delete_contact(
+    contact: Contact = Depends(get_owned_contact),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
     """删除联系人及其消息。"""
-    contact = await db.get(Contact, contact_id)
-    if not contact:
-        raise HTTPException(status_code=404, detail="联系人不存在")
     await db.delete(contact)
     await db.commit()
     return {"status": "ok"}
@@ -143,16 +157,16 @@ async def delete_contact(contact_id: int, db: AsyncSession = Depends(get_db)) ->
 
 @router.post("/{contact_id}/avatar", response_model=ContactOut)
 async def upload_avatar(
-    contact_id: int,
+    contact: Contact = Depends(get_owned_contact),
     file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ContactOut:
     """上传联系人头像。"""
-    contact = await db.get(Contact, contact_id)
-    if not contact:
-        raise HTTPException(status_code=404, detail="联系人不存在")
     try:
-        contact.avatar_url = await save_upload(settings.upload_dir, file, "avatars")
+        contact.avatar_url = await save_upload(
+            settings.upload_dir, file, f"u{user.id}/avatars"
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     await db.commit()
@@ -162,19 +176,17 @@ async def upload_avatar(
 
 @router.post("/{contact_id}/background/{platform}", response_model=ContactOut)
 async def upload_background(
-    contact_id: int,
     platform: str,
+    contact: Contact = Depends(get_owned_contact),
     file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ContactOut:
     """上传该联系人的聊天背景图（platform: desktop | mobile）。"""
     if platform not in ("desktop", "mobile"):
         raise HTTPException(status_code=400, detail="platform 须为 desktop 或 mobile")
-    contact = await db.get(Contact, contact_id)
-    if not contact:
-        raise HTTPException(status_code=404, detail="联系人不存在")
     try:
-        url = await save_upload(settings.upload_dir, file, "backgrounds")
+        url = await save_upload(settings.upload_dir, file, f"u{user.id}/backgrounds")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if platform == "mobile":
@@ -188,14 +200,13 @@ async def upload_background(
 
 @router.delete("/{contact_id}/background/{platform}", response_model=ContactOut)
 async def clear_background(
-    contact_id: int, platform: str, db: AsyncSession = Depends(get_db)
+    platform: str,
+    contact: Contact = Depends(get_owned_contact),
+    db: AsyncSession = Depends(get_db),
 ) -> ContactOut:
     """清除指定端的聊天背景，恢复默认。"""
     if platform not in ("desktop", "mobile"):
         raise HTTPException(status_code=400, detail="platform 须为 desktop 或 mobile")
-    contact = await db.get(Contact, contact_id)
-    if not contact:
-        raise HTTPException(status_code=404, detail="联系人不存在")
     if platform == "mobile":
         contact.chat_background_mobile_url = None
     else:

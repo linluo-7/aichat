@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     reply_typing_enabled: bool = True
     # 全站默认开启网页搜索/抓取（flash + Search/Fetch API）
     web_tools_enabled: bool = True
+    # JWT 签名密钥（生产必须用环境变量覆盖）
+    auth_secret: str = "dev-only-change-me"
+    # JWT 有效期（天）
+    auth_token_days: int = 30
+    # 空库时自动创建管理员（用户名/密码）；生产创建后请改密
+    bootstrap_admin_user: str = "lxy"
+    bootstrap_admin_password: str = "change-me"
 
 
 settings = Settings()

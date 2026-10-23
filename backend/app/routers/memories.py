@@ -3,7 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import Contact
+from app.deps import get_current_user, get_owned_contact
+from app.models import Contact, Memory, User
 from app.schemas import (
     MemoriesPageOut,
     MemoryCreate,
@@ -27,16 +28,25 @@ from app.services.memory_store import (
 router = APIRouter(prefix="/api", tags=["memories"])
 
 
-@router.get("/contacts/{contact_id}/memories", response_model=MemoriesPageOut)
-async def get_memories(contact_id: int, db: AsyncSession = Depends(get_db)) -> MemoriesPageOut:
-    """获取「Ta 记得的事」：总结 + 分组列表；标记已读。"""
-    contact = await db.get(Contact, contact_id)
-    if not contact:
-        raise HTTPException(status_code=404, detail="联系人不存在")
+async def _owned_memory(db: AsyncSession, memory_id: int, user: User) -> Memory:
+    """校验记忆属于当前用户。"""
+    mem = await db.get(Memory, memory_id)
+    if not mem:
+        raise HTTPException(status_code=404, detail="记忆不存在")
+    contact = await db.get(Contact, mem.contact_id)
+    if not contact or contact.user_id != user.id:
+        raise HTTPException(status_code=404, detail="记忆不存在")
+    return mem
 
-    state = await get_or_create_state(db, contact_id)
+
+@router.get("/contacts/{contact_id}/memories", response_model=MemoriesPageOut)
+async def get_memories(
+    contact: Contact = Depends(get_owned_contact),
+    db: AsyncSession = Depends(get_db),
+) -> MemoriesPageOut:
+    """获取记忆：总结 + 分组列表；标记已读。"""
+    state = await get_or_create_state(db, contact.id)
     digest = state.digest
-    # 过期时先返回旧总结，后台可再请求 digest；此处同步刷新一次（用户打开页面）
     if state.digest_stale:
         try:
             digest = await generate_digest(db, contact, force=True)
@@ -44,9 +54,9 @@ async def get_memories(contact_id: int, db: AsyncSession = Depends(get_db)) -> M
         except Exception:  # noqa: BLE001
             digest = state.digest
 
-    actives = await list_active_memories(db, contact_id)
-    retired = await list_retired_memories(db, contact_id)
-    await mark_all_seen(db, contact_id)
+    actives = await list_active_memories(db, contact.id)
+    retired = await list_retired_memories(db, contact.id)
+    await mark_all_seen(db, contact.id)
 
     return MemoriesPageOut(
         digest=digest,
@@ -68,15 +78,14 @@ async def get_memories(contact_id: int, db: AsyncSession = Depends(get_db)) -> M
 
 @router.post("/contacts/{contact_id}/memories", response_model=MemoryOut, status_code=201)
 async def create_memory(
-    contact_id: int, body: MemoryCreate, db: AsyncSession = Depends(get_db)
+    body: MemoryCreate,
+    contact: Contact = Depends(get_owned_contact),
+    db: AsyncSession = Depends(get_db),
 ) -> MemoryOut:
     """手动添加记忆。"""
-    contact = await db.get(Contact, contact_id)
-    if not contact:
-        raise HTTPException(status_code=404, detail="联系人不存在")
     mem = await add_memory(
         db,
-        contact_id,
+        contact.id,
         category=body.category,
         content=body.content,
         importance=body.importance,
@@ -91,9 +100,13 @@ async def create_memory(
 
 @router.patch("/memories/{memory_id}", response_model=MemoryOut)
 async def patch_memory(
-    memory_id: int, body: MemoryUpdate, db: AsyncSession = Depends(get_db)
+    memory_id: int,
+    body: MemoryUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> MemoryOut:
     """编辑内容或置顶。"""
+    await _owned_memory(db, memory_id, user)
     try:
         return await update_memory(
             db, memory_id, content=body.content, pinned=body.pinned
@@ -103,8 +116,13 @@ async def patch_memory(
 
 
 @router.delete("/memories/{memory_id}")
-async def remove_memory(memory_id: int, db: AsyncSession = Depends(get_db)) -> dict:
+async def remove_memory(
+    memory_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     """删除一条记忆。"""
+    await _owned_memory(db, memory_id, user)
     try:
         await delete_memory(db, memory_id)
     except ValueError as exc:
@@ -114,39 +132,35 @@ async def remove_memory(memory_id: int, db: AsyncSession = Depends(get_db)) -> d
 
 @router.delete("/contacts/{contact_id}/memories")
 async def clear_contact_memories(
-    contact_id: int, db: AsyncSession = Depends(get_db)
+    contact: Contact = Depends(get_owned_contact),
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
     """清空该联系人全部记忆。"""
-    contact = await db.get(Contact, contact_id)
-    if not contact:
-        raise HTTPException(status_code=404, detail="联系人不存在")
-    n = await clear_memories(db, contact_id)
+    n = await clear_memories(db, contact.id)
     return {"status": "ok", "deleted": n}
 
 
 @router.post("/contacts/{contact_id}/memories/digest")
-async def refresh_digest(contact_id: int, db: AsyncSession = Depends(get_db)) -> dict:
-    """重新生成「Ta 眼中的你」。"""
-    contact = await db.get(Contact, contact_id)
-    if not contact:
-        raise HTTPException(status_code=404, detail="联系人不存在")
+async def refresh_digest(
+    contact: Contact = Depends(get_owned_contact),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """重新生成记忆总结。"""
     text = await generate_digest(db, contact, force=True)
     return {"digest": text}
 
 
 @router.post("/contacts/{contact_id}/memories/consolidate")
-async def consolidate_now(contact_id: int, db: AsyncSession = Depends(get_db)) -> dict:
+async def consolidate_now(
+    contact: Contact = Depends(get_owned_contact),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     """立即整理记忆（仍受每日上限约束）。"""
-    contact = await db.get(Contact, contact_id)
-    if not contact:
-        raise HTTPException(status_code=404, detail="联系人不存在")
     if not contact.memory_enabled:
         raise HTTPException(status_code=400, detail="记忆已关闭")
-    # 强制：临时绕过消息条数门槛，但仍检查每日上限与失败次数
     ok = await should_extract(db, contact)
     if not ok:
-        # 仍允许用户强制：直接尝试，若每日上限则报错
-        state = await get_or_create_state(db, contact_id)
+        state = await get_or_create_state(db, contact.id)
         from datetime import datetime
         from zoneinfo import ZoneInfo
 

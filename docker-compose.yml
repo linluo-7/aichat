@@ -9,6 +9,10 @@ services:
       - backend_uploads:/app/uploads
     environment:
       - CORS_ORIGINS=http://localhost:8090,http://127.0.0.1:8090
+      # 本地可改；生产密钥勿提交仓库
+      - AUTH_SECRET=${AUTH_SECRET:-dev-local-change-me}
+      - BOOTSTRAP_ADMIN_USER=${BOOTSTRAP_ADMIN_USER:-lxy}
+      - BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_ADMIN_PASSWORD:-change-me}
     restart: unless-stopped
 
   frontend:

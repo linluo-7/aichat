@@ -14,6 +14,11 @@ import paramiko
 HOST = os.environ.get("DEPLOY_HOST", "146.56.251.112")
 USER = os.environ.get("DEPLOY_USER", "root")
 PASSWORD = os.environ.get("DEPLOY_SSH_PASSWORD", "")
+# 无密码时可用密钥：DEPLOY_SSH_KEY，或默认 ~/.ssh/id_rsa_hui
+SSH_KEY = os.environ.get(
+    "DEPLOY_SSH_KEY",
+    str(Path.home() / ".ssh" / "id_rsa_hui"),
+)
 REMOTE = os.environ.get("DEPLOY_PATH", "/opt/qixiang")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 # 默认使用 Docker 层缓存；仅当 DEPLOY_NO_CACHE=1 时全量重建（很慢）
@@ -70,8 +75,10 @@ def run(ssh: paramiko.SSHClient, cmd: str) -> None:
 
 
 def main() -> None:
-    if not PASSWORD:
-        print("请设置环境变量 DEPLOY_SSH_PASSWORD", file=sys.stderr)
+    key_path = Path(SSH_KEY).expanduser() if SSH_KEY else None
+    use_key = bool(key_path and key_path.is_file())
+    if not PASSWORD and not use_key:
+        print("请设置 DEPLOY_SSH_PASSWORD，或配置可用的 DEPLOY_SSH_KEY", file=sys.stderr)
         sys.exit(1)
 
     with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp:
@@ -85,7 +92,18 @@ def main() -> None:
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         print(f"连接 {USER}@{HOST}…")
-        ssh.connect(HOST, username=USER, password=PASSWORD, timeout=60)
+        if PASSWORD:
+            ssh.connect(HOST, username=USER, password=PASSWORD, timeout=60)
+        else:
+            print(f"使用密钥 {key_path}")
+            ssh.connect(
+                HOST,
+                username=USER,
+                key_filename=str(key_path),
+                timeout=60,
+                look_for_keys=False,
+                allow_agent=False,
+            )
 
         sftp = ssh.open_sftp()
         run(ssh, f"mkdir -p {REMOTE}")

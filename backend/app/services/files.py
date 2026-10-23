@@ -46,11 +46,14 @@ async def save_upload(upload_dir: Path, file: UploadFile, subfolder: str) -> str
 
 
 async def save_chat_attachment(
-    upload_dir: Path, file: UploadFile
+    upload_dir: Path,
+    file: UploadFile,
+    *,
+    subfolder: str = "chat_files",
 ) -> tuple[str, str, str, str, bytes]:
     """
     保存聊天附件，返回 (url, kind, display_name, text_for_ai, raw_bytes)。
-    kind 为 image 或 file。
+    kind 为 image 或 file。subfolder 建议带用户前缀如 u1/chat_files。
     """
     content_type = file.content_type or "application/octet-stream"
     raw_name = (file.filename or "未命名文件").replace("\\", "/").split("/")[-1][:200]
@@ -79,10 +82,10 @@ async def save_chat_attachment(
     else:
         raise ValueError("不支持该文件类型，可发送图片或 txt/pdf/doc/docx")
 
-    target_dir = upload_dir / "chat_files"
+    target_dir = upload_dir / subfolder
     target_dir.mkdir(parents=True, exist_ok=True)
     filename = f"{uuid.uuid4().hex}{ext}"
     path = target_dir / filename
     path.write_bytes(data)
-    url = f"/uploads/chat_files/{filename}"
+    url = f"/uploads/{subfolder}/{filename}".replace("\\", "/")
     return url, kind, raw_name, text_for_ai, data

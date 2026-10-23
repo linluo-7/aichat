@@ -2,9 +2,13 @@
 import { ref } from 'vue'
 import ImageCropModal from './ImageCropModal.vue'
 import { CROP_PRESET_AVATAR, useImageCrop } from '../composables/useImageCrop'
+import { useAuthStore } from '../stores/auth'
+import { useChatStore } from '../stores/chat'
 import { useProfileStore } from '../stores/profile'
 
 const emit = defineEmits(['close'])
+const auth = useAuthStore()
+const store = useChatStore()
 const profile = useProfileStore()
 const { cropOpen, cropSrc, cropOptions, handleCropConfirm, handleCropCancel, onImageSelected } =
   useImageCrop()
@@ -15,6 +19,14 @@ const saving = ref(false)
 const error = ref('')
 const avatarInput = ref(null)
 const avatarFile = ref(null)
+
+const showPwd = ref(false)
+const oldPwd = ref('')
+const newPwd = ref('')
+const newPwd2 = ref('')
+const pwdSaving = ref(false)
+const pwdError = ref('')
+const pwdOk = ref('')
 
 function pickAvatar() {
   avatarInput.value?.click()
@@ -57,13 +69,47 @@ async function submit() {
     saving.value = false
   }
 }
+
+async function submitPassword() {
+  pwdError.value = ''
+  pwdOk.value = ''
+  if (newPwd.value.length < 6) {
+    pwdError.value = '新密码至少 6 位'
+    return
+  }
+  if (newPwd.value !== newPwd2.value) {
+    pwdError.value = '两次新密码不一致'
+    return
+  }
+  pwdSaving.value = true
+  try {
+    await auth.changePassword(oldPwd.value, newPwd.value)
+    pwdOk.value = '密码已更新'
+    oldPwd.value = ''
+    newPwd.value = ''
+    newPwd2.value = ''
+  } catch (e) {
+    pwdError.value = e.response?.data?.detail || e.message || '修改失败'
+  } finally {
+    pwdSaving.value = false
+  }
+}
+
+function logout() {
+  auth.logout()
+  store.$reset()
+  localStorage.removeItem('aichat_last_sync_id')
+  emit('close')
+}
 </script>
 
 <template>
   <div class="qq-modal-mask" @click.self="emit('close')">
     <div class="qq-modal profile-modal">
       <h2>我的资料</h2>
-      <p class="sub">设置你在聊天里显示的头像和昵称</p>
+      <p class="sub">
+        账号 {{ auth.user?.username || '—' }} · 设置头像和昵称
+      </p>
 
       <div class="avatar-block">
         <button type="button" class="avatar-btn" @click="pickAvatar">
@@ -85,6 +131,40 @@ async function submit() {
           {{ saving ? '保存中…' : '保存' }}
         </button>
       </div>
+
+      <div class="extra-block">
+        <button type="button" class="text-btn" @click="showPwd = !showPwd">
+          {{ showPwd ? '收起改密' : '修改密码' }}
+        </button>
+        <div v-if="showPwd" class="pwd-form">
+          <label class="qq-field">
+            <span>原密码</span>
+            <input v-model="oldPwd" type="password" autocomplete="current-password" />
+          </label>
+          <label class="qq-field">
+            <span>新密码</span>
+            <input v-model="newPwd" type="password" autocomplete="new-password" />
+          </label>
+          <label class="qq-field">
+            <span>确认新密码</span>
+            <input v-model="newPwd2" type="password" autocomplete="new-password" />
+          </label>
+          <p v-if="pwdError" class="qq-err">{{ pwdError }}</p>
+          <p v-if="pwdOk" class="ok">{{ pwdOk }}</p>
+          <button
+            type="button"
+            class="qq-btn qq-btn-primary"
+            :disabled="pwdSaving"
+            @click="submitPassword"
+          >
+            {{ pwdSaving ? '提交中…' : '确认改密' }}
+          </button>
+        </div>
+      </div>
+
+      <p class="tip">本站无偿学习分享；若觉有用，可自愿赞赏作者（入口稍后放这里）。</p>
+
+      <button type="button" class="logout-btn" @click="logout">退出登录</button>
     </div>
   </div>
 
@@ -103,6 +183,8 @@ async function submit() {
 <style scoped>
 .profile-modal {
   width: min(400px, 92vw);
+  max-height: 90vh;
+  overflow-y: auto;
 }
 
 .avatar-block {
@@ -133,5 +215,52 @@ async function submit() {
 .avatar-hint {
   font-size: 12px;
   color: var(--wx-green);
+}
+
+.extra-block {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--wx-border);
+}
+
+.text-btn {
+  border: none;
+  background: none;
+  color: #576b95;
+  cursor: pointer;
+  padding: 0;
+  font-size: 14px;
+}
+
+.pwd-form {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ok {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--wx-green);
+}
+
+.tip {
+  margin: 16px 0 8px;
+  font-size: 12px;
+  color: #999;
+  line-height: 1.5;
+}
+
+.logout-btn {
+  width: 100%;
+  margin-top: 8px;
+  border: 1px solid #fa5151;
+  background: #fff;
+  color: #fa5151;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 14px;
+  cursor: pointer;
 }
 </style>

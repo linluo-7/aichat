@@ -145,7 +145,11 @@ async function submit() {
         <input
           v-model="apiKey"
           type="password"
-          placeholder="留空则不修改"
+          :placeholder="
+            contact?.api_key_masked
+              ? `当前 ${contact.api_key_masked}，留空不修改`
+              : '留空则不修改'
+          "
           autocomplete="new-password"
           name="edit-contact-api-key"
         />

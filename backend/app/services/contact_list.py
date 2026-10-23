@@ -29,12 +29,14 @@ def _message_preview(content: str, attachment_kind: str | None, attachment_name:
 
 async def fetch_contacts_with_last_message(
     db: AsyncSession,
+    *,
+    user_id: int,
 ) -> list[tuple[Contact, str | None, datetime | None]]:
     """
-    查询全部联系人及各自最近一条 user/assistant 消息。
+    查询指定用户的联系人及各自最近一条 user/assistant 消息。
     返回 (联系人, 摘要文本, 消息时间)，按最近聊天时间倒序。
     """
-    contacts_result = await db.execute(select(Contact))
+    contacts_result = await db.execute(select(Contact).where(Contact.user_id == user_id))
     contacts = list(contacts_result.scalars().all())
     if not contacts:
         return []

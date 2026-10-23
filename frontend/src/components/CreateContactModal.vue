@@ -13,14 +13,20 @@ const name = ref('')
 const persona = ref('')
 const apiKey = ref('')
 const avatarFile = ref(null)
-const avatarPreview = ref(null)
+const avatarPreview = ref('/default-avatar.svg')
+const avatarInput = ref(null)
 const saving = ref(false)
 const error = ref('')
+
+/** 点击顶部头像打开文件选择 */
+function pickAvatar() {
+  avatarInput.value?.click()
+}
 
 function onAvatarChange(e) {
   onImageSelected(e, CROP_PRESET_AVATAR, (file) => {
     avatarFile.value = file
-    avatarPreview.value = file ? URL.createObjectURL(file) : null
+    avatarPreview.value = file ? URL.createObjectURL(file) : '/default-avatar.svg'
   })
 }
 
@@ -59,12 +65,22 @@ async function submit() {
 
 <template>
   <div class="qq-modal-mask" @click.self="emit('close')">
-    <form class="qq-modal" autocomplete="off" @submit.prevent="submit">
+    <form class="qq-modal create-modal" autocomplete="off" @submit.prevent="submit">
       <h2>添加联系人</h2>
       <p class="sub">填写昵称、角色设定与 DeepSeek Key</p>
 
-      <div v-if="avatarPreview" class="preview-row">
-        <img :src="avatarPreview" alt="" class="preview-avatar" />
+      <div class="avatar-block">
+        <button type="button" class="avatar-btn" @click="pickAvatar">
+          <img :src="avatarPreview" alt="" class="avatar-lg" />
+          <span class="avatar-hint">点击设置头像</span>
+        </button>
+        <input
+          ref="avatarInput"
+          type="file"
+          accept="image/*"
+          hidden
+          @change="onAvatarChange"
+        />
       </div>
 
       <label class="qq-field">
@@ -100,10 +116,6 @@ async function submit() {
           name="new-contact-api-key"
         />
       </label>
-      <label class="qq-field">
-        <span>头像（可选）</span>
-        <input type="file" accept="image/*" @change="onAvatarChange" />
-      </label>
 
       <p v-if="error" class="qq-err">{{ error }}</p>
       <div class="qq-modal-actions">
@@ -128,16 +140,38 @@ async function submit() {
 </template>
 
 <style scoped>
-.preview-row {
-  display: flex;
-  justify-content: center;
-  margin-bottom: 12px;
+.create-modal {
+  width: min(440px, 92vw);
 }
 
-.preview-avatar {
-  width: 64px;
-  height: 64px;
+.avatar-block {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 18px;
+}
+
+.avatar-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.avatar-lg {
+  width: 88px;
+  height: 88px;
   border-radius: var(--wx-avatar-radius);
   object-fit: cover;
+  border: 1px solid var(--wx-border);
+  background: #f5f5f5;
+}
+
+.avatar-hint {
+  font-size: 12px;
+  color: var(--wx-green);
 }
 </style>

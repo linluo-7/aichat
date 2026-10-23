@@ -1,10 +1,65 @@
 import axios from 'axios'
 
+const TOKEN_KEY = 'aichat_token'
+
 /** 开发走 Vite 代理；生产由 Nginx 同域转发 /api */
 const client = axios.create({
   baseURL: '',
   timeout: 120000,
 })
+
+client.interceptors.request.use((config) => {
+  const token = localStorage.getItem(TOKEN_KEY)
+  if (token) {
+    config.headers = config.headers || {}
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
+
+client.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    if (err.response?.status === 401) {
+      const url = err.config?.url || ''
+      if (!url.includes('/api/auth/login') && !url.includes('/api/auth/register')) {
+        localStorage.removeItem(TOKEN_KEY)
+        if (!window.location.hash.includes('auth')) {
+          window.dispatchEvent(new CustomEvent('aichat:unauthorized'))
+        }
+      }
+    }
+    return Promise.reject(err)
+  },
+)
+
+export async function login(username, password) {
+  const { data } = await client.post('/api/auth/login', { username, password })
+  return data
+}
+
+export async function register(code, username, password) {
+  const { data } = await client.post('/api/auth/register', { code, username, password })
+  return data
+}
+
+export async function checkInvite(code) {
+  const { data } = await client.post('/api/auth/invite/check', { code })
+  return data
+}
+
+export async function getMe() {
+  const { data } = await client.get('/api/auth/me')
+  return data
+}
+
+export async function changePassword(old_password, new_password) {
+  const { data } = await client.post('/api/auth/change-password', {
+    old_password,
+    new_password,
+  })
+  return data
+}
 
 export async function getProfile() {
   const { data } = await client.get('/api/profile')

@@ -29,7 +29,8 @@ class ContactCreate(BaseModel):
 class ContactUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=64)
     persona: str | None = Field(default=None, max_length=PERSONA_MAX_LENGTH)
-    api_key: str | None = Field(default=None, min_length=8, max_length=256)
+    # 留空或不传表示不修改
+    api_key: str | None = Field(default=None, max_length=256)
     auto_message_enabled: bool | None = None
     auto_message_interval_minutes: int | None = Field(default=None, ge=1, le=10_080)
     memory_enabled: bool | None = None
@@ -39,6 +40,7 @@ class ContactOut(BaseModel):
     id: int
     name: str
     persona: str
+    api_key_masked: str = ""
     avatar_url: str | None
     chat_background_url: str | None
     chat_background_mobile_url: str | None = None

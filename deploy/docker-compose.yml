@@ -11,6 +11,10 @@ services:
       - backend_uploads:/app/uploads
     environment:
       - CORS_ORIGINS=http://chat.linluo.site,https://chat.linluo.site,http://www.linluo.site,https://www.linluo.site
+      # 生产请在服务器 docker-compose 或环境中覆盖为真实值（勿把密钥提交进公开仓库）
+      - AUTH_SECRET=${AUTH_SECRET:-CHANGE_ME_TO_A_LONG_RANDOM_SECRET}
+      - BOOTSTRAP_ADMIN_USER=${BOOTSTRAP_ADMIN_USER:-lxy}
+      - BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_ADMIN_PASSWORD:-change-me}
     restart: unless-stopped
 
   frontend:

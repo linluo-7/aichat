@@ -7,7 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.models import Contact, Message
+from app.deps import get_current_user, get_owned_contact
+from app.models import Contact, Message, User
 from app.schemas import ChatRequest, MessageOut, MessagesPageOut
 from app.services.files import save_chat_attachment
 from app.services.reply_jobs import enqueue_user_reply
@@ -43,18 +44,14 @@ async def _after_user_message(db: AsyncSession, contact: Contact) -> None:
 
 @router.get("/{contact_id}/messages", response_model=MessagesPageOut)
 async def list_messages(
-    contact_id: int,
+    contact: Contact = Depends(get_owned_contact),
     before_id: int | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
 ) -> MessagesPageOut:
     """历史分页：按 id 倒序取、正序返回。"""
-    contact = await db.get(Contact, contact_id)
-    if not contact:
-        raise HTTPException(status_code=404, detail="联系人不存在")
-
     q = select(Message).where(
-        Message.contact_id == contact_id,
+        Message.contact_id == contact.id,
         Message.role.in_(["user", "assistant"]),
     )
     if before_id is not None:
@@ -70,18 +67,14 @@ async def list_messages(
 
 @router.post("/{contact_id}/messages", response_model=MessageOut, status_code=201)
 async def post_message(
-    contact_id: int,
     body: ChatRequest,
+    contact: Contact = Depends(get_owned_contact),
     db: AsyncSession = Depends(get_db),
 ) -> Message:
     """发送文本消息，创建回复任务后立即返回。"""
-    contact = await db.get(Contact, contact_id)
-    if not contact:
-        raise HTTPException(status_code=404, detail="联系人不存在")
-
     user_text = body.content.strip()
     user_msg = Message(
-        contact_id=contact_id,
+        contact_id=contact.id,
         role="user",
         content=user_text,
         created_at=utc_now(),
@@ -95,33 +88,28 @@ async def post_message(
 
 @router.post("/{contact_id}/messages/file", response_model=MessageOut, status_code=201)
 async def post_message_file(
-    contact_id: int,
+    contact: Contact = Depends(get_owned_contact),
     file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Message:
     """上传图片/文件作为用户消息并入队回复。"""
-    contact = await db.get(Contact, contact_id)
-    if not contact:
-        raise HTTPException(status_code=404, detail="联系人不存在")
-
     try:
-        url, kind, name, text_for_ai, _raw = await save_chat_attachment(settings.upload_dir, file)
+        url, kind, name, text_for_ai, _raw = await save_chat_attachment(
+            settings.upload_dir, file, subfolder=f"u{user.id}/chat_files"
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     display = _display_content_for_file(kind, name, text_for_ai)
-    # 文件消息：展示用简短内容，AI 上下文在 Worker 里用 attachment 描述
-    # 将 AI 可读文本写入 content 若展示为空则用 text_for_ai 截断存
     content = display if display.strip() else (
         "[用户发送了一张图片]" if kind == "image" else f"[文件 {name}]"
     )
-    # 对可读文本文件，保留摘要在 content 供上下文
     if kind == "file" and text_for_ai and len(text_for_ai) > len(content):
-        # Worker 的 message_to_llm_text 主要用 content；写入精简 AI 文本
         content = text_for_ai[:4000]
 
     user_msg = Message(
-        contact_id=contact_id,
+        contact_id=contact.id,
         role="user",
         content=display if kind == "image" else content,
         attachment_url=url,
@@ -129,7 +117,6 @@ async def post_message_file(
         attachment_kind=kind,
         created_at=utc_now(),
     )
-    # 图片展示 content 为空字符串
     if kind == "image":
         user_msg.content = ""
     db.add(user_msg)
