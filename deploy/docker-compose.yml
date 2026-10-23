@@ -1,0 +1,27 @@
+# 服务器 /opt/qixiang/docker-compose.yml
+# 仅绑定本机：由宿主 Nginx 反代 8080（前端）与 8000（API）
+services:
+  backend:
+    build: ./backend
+    container_name: qixiang-backend
+    ports:
+      - "127.0.0.1:8000:8091"
+    volumes:
+      - backend_data:/app/data
+      - backend_uploads:/app/uploads
+    environment:
+      - CORS_ORIGINS=http://chat.linluo.site,https://chat.linluo.site,http://www.linluo.site,https://www.linluo.site
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: qixiang-frontend
+    ports:
+      - "127.0.0.1:8080:8090"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  backend_data:
+  backend_uploads:

@@ -1,0 +1,16 @@
+/* 移动端全局：安全区、触摸优化 */
+@media (max-width: 768px) {
+  .qq-modal-mask {
+    align-items: flex-end;
+  }
+
+  .qq-modal,
+  .detail-card {
+    width: 100%;
+    max-width: none;
+    border-radius: 12px 12px 0 0;
+    max-height: 92dvh;
+    overflow-y: auto;
+    padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  }
+}

@@ -1,0 +1,25 @@
+services:
+  backend:
+    build: ./backend
+    container_name: aichat-backend
+    ports:
+      - "8091:8091"
+    volumes:
+      - backend_data:/app/data
+      - backend_uploads:/app/uploads
+    environment:
+      - CORS_ORIGINS=http://localhost:8090,http://127.0.0.1:8090
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: aichat-frontend
+    ports:
+      - "8090:8090"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  backend_data:
+  backend_uploads:
