@@ -1,6 +1,6 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { commentMoment, deleteMoment, listMoments } from '../api/client'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { commentMoment, deleteMoment, listMoments, toggleMomentLike } from '../api/client'
 import { hasMomentDraft } from '../utils/momentDraft'
 import { formatShanghai } from '../utils/beijingTime'
 
@@ -10,8 +10,14 @@ const posts = ref([])
 const loading = ref(false)
 const error = ref('')
 const replyDraft = ref({})
+const rootDraft = ref({})
 const pollTimer = ref(null)
 const draftBadge = ref(hasMomentDraft())
+/** 当前展开操作菜单的动态 id */
+const openMenuId = ref(null)
+/** 正在输入评论的动态 id */
+const commentingId = ref(null)
+const commentInputRefs = ref({})
 
 const likeNames = computed(() => (post) => (post.likes || []).map((l) => l.contact_name).join('、'))
 
@@ -65,6 +71,42 @@ function threadUnder(post, root) {
   return out
 }
 
+function toggleMenu(postId) {
+  openMenuId.value = openMenuId.value === postId ? null : postId
+}
+
+async function onLike(post) {
+  openMenuId.value = null
+  try {
+    const res = await toggleMomentLike(post.id)
+    post.liked_by_me = !!res.liked
+    await refresh()
+  } catch (e) {
+    alert(e.response?.data?.detail || e.message || '点赞失败')
+  }
+}
+
+async function startComment(post) {
+  openMenuId.value = null
+  commentingId.value = post.id
+  if (!rootDraft.value[post.id]) rootDraft.value[post.id] = ''
+  await nextTick()
+  commentInputRefs.value[post.id]?.focus?.()
+}
+
+async function sendRootComment(post) {
+  const text = (rootDraft.value[post.id] || '').trim()
+  if (!text) return
+  try {
+    await commentMoment(post.id, text, null)
+    rootDraft.value[post.id] = ''
+    commentingId.value = null
+    await refresh()
+  } catch (e) {
+    alert(e.response?.data?.detail || e.message || '评论失败')
+  }
+}
+
 async function sendReply(post, parentComment) {
   const key = parentComment.id
   const text = (replyDraft.value[key] || '').trim()
@@ -76,6 +118,10 @@ async function sendReply(post, parentComment) {
   } catch (e) {
     alert(e.response?.data?.detail || e.message || '回复失败')
   }
+}
+
+function onFeedClick() {
+  openMenuId.value = null
 }
 
 onMounted(() => {
@@ -102,7 +148,7 @@ onUnmounted(() => {
       </button>
     </header>
 
-    <div class="feed">
+    <div class="feed" @click="onFeedClick">
       <p v-if="error" class="hint err">{{ error }}</p>
       <p v-else-if="loading && !posts.length" class="hint">加载中…</p>
       <p v-else-if="!posts.length" class="hint">还没有动态，点右上角相机发一条吧</p>
@@ -115,7 +161,7 @@ onUnmounted(() => {
               v-if="post.author_type === 'user'"
               type="button"
               class="del"
-              @click="removePost(post)"
+              @click.stop="removePost(post)"
             >
               删除
             </button>
@@ -124,8 +170,27 @@ onUnmounted(() => {
           <div v-if="post.images?.length" class="imgs" :class="'n' + Math.min(post.images.length, 3)">
             <img v-for="img in post.images" :key="img.id" :src="img.url" alt="" />
           </div>
-          <p class="time">{{ fmtTime(post.created_at) }}</p>
-          <div v-if="post.likes?.length || post.comments?.length" class="social">
+
+          <div class="meta-row">
+            <span class="time">{{ fmtTime(post.created_at) }}</span>
+            <div class="act-wrap" @click.stop>
+              <div v-if="openMenuId === post.id" class="act-menu">
+                <button type="button" class="act-item" @click="onLike(post)">
+                  {{ post.liked_by_me ? '取消' : '赞' }}
+                </button>
+                <span class="act-split" />
+                <button type="button" class="act-item" @click="startComment(post)">评论</button>
+              </div>
+              <button type="button" class="more-btn" aria-label="赞与评论" @click="toggleMenu(post.id)">
+                <span class="dots">···</span>
+              </button>
+            </div>
+          </div>
+
+          <div
+            v-if="post.likes?.length || post.comments?.length || commentingId === post.id"
+            class="social"
+          >
             <p v-if="post.likes?.length" class="likes">♥ {{ likeNames(post) }}</p>
             <div v-for="root in rootComments(post)" :key="root.id" class="cmt-block">
               <p class="cmt">
@@ -144,6 +209,17 @@ onUnmounted(() => {
                 />
                 <button type="button" @click="sendReply(post, root)">发送</button>
               </div>
+            </div>
+            <div v-if="commentingId === post.id" class="reply-row root-row">
+              <input
+                :ref="(el) => { if (el) commentInputRefs[post.id] = el }"
+                v-model="rootDraft[post.id]"
+                type="text"
+                maxlength="200"
+                placeholder="评论…"
+                @keyup.enter="sendRootComment(post)"
+              />
+              <button type="button" @click="sendRootComment(post)">发送</button>
             </div>
           </div>
           <p v-else-if="post.author_type === 'user'" class="pending">联系人正在赶来点赞评论…</p>
@@ -273,10 +349,66 @@ onUnmounted(() => {
   border-radius: 4px;
   background: #f0f0f0;
 }
-.time {
+.meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   margin: 4px 0 8px;
+  gap: 8px;
+}
+.time {
   font-size: 12px;
   color: #999;
+}
+.act-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.more-btn {
+  border: none;
+  background: #f7f7f7;
+  border-radius: 4px;
+  width: 32px;
+  height: 22px;
+  padding: 0;
+  cursor: pointer;
+  color: #576b95;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.dots {
+  font-size: 16px;
+  letter-spacing: 1px;
+  line-height: 1;
+  font-weight: 700;
+}
+.act-menu {
+  position: absolute;
+  right: 36px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  background: #4c4c4c;
+  border-radius: 4px;
+  padding: 0 4px;
+  z-index: 5;
+  white-space: nowrap;
+}
+.act-item {
+  border: none;
+  background: none;
+  color: #fff;
+  font-size: 13px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+.act-split {
+  width: 1px;
+  height: 16px;
+  background: rgba(255, 255, 255, 0.25);
 }
 .social {
   background: #f7f7f7;
@@ -305,6 +437,9 @@ onUnmounted(() => {
   display: flex;
   gap: 6px;
   margin-top: 6px;
+}
+.reply-row.root-row {
+  margin-top: 8px;
 }
 .reply-row input {
   flex: 1;

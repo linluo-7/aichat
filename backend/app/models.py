@@ -276,6 +276,22 @@ class MomentLike(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class MomentUserLike(Base):
+    """【朋友圈】用户本人点赞。"""
+
+    __tablename__ = "moment_user_likes"
+    __table_args__ = (Index("uq_moment_user_likes_post_user", "post_id", "user_id", unique=True),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    post_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("moment_posts.id", ondelete="CASCADE"), nullable=False, comment="动态"
+    )
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, comment="点赞用户"
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class MomentComment(Base):
     """【朋友圈】评论（首评 / 回复）。"""
 

@@ -15,6 +15,7 @@ from app.models import (
     MomentImage,
     MomentLike,
     MomentPost,
+    MomentUserLike,
     User,
     UserProfile,
 )
@@ -32,7 +33,8 @@ class MomentImageOut(BaseModel):
 
 
 class MomentLikeOut(BaseModel):
-    contact_id: int
+    liker_type: str = "contact"  # user | contact
+    contact_id: int | None = None
     contact_name: str
     contact_avatar: str | None = None
 
@@ -58,6 +60,7 @@ class MomentPostOut(BaseModel):
     content: str
     images: list[MomentImageOut]
     likes: list[MomentLikeOut]
+    liked_by_me: bool = False
     comments: list[MomentCommentOut]
     created_at: str
 
@@ -92,12 +95,31 @@ async def _serialize_post(db: AsyncSession, post: MomentPost, user: User) -> Mom
         MomentImageOut(id=i.id, url=i.url, sort_order=i.sort_order) for i in imgs.scalars().all()
     ]
 
-    like_rows = await db.execute(select(MomentLike).where(MomentLike.post_id == post.id))
+    me_name, _ = await _profile_name(db, user.id)
     likes: list[MomentLikeOut] = []
+    liked_by_me = False
+    my_like = await db.execute(
+        select(MomentUserLike).where(
+            MomentUserLike.post_id == post.id, MomentUserLike.user_id == user.id
+        )
+    )
+    if my_like.scalar_one_or_none():
+        liked_by_me = True
+        likes.append(
+            MomentLikeOut(
+                liker_type="user",
+                contact_id=None,
+                contact_name=me_name,
+                contact_avatar=None,
+            )
+        )
+
+    like_rows = await db.execute(select(MomentLike).where(MomentLike.post_id == post.id))
     for lk in like_rows.scalars().all():
         c = await db.get(Contact, lk.contact_id)
         likes.append(
             MomentLikeOut(
+                liker_type="contact",
                 contact_id=lk.contact_id,
                 contact_name=c.name if c else "?",
                 contact_avatar=c.avatar_url if c else None,
@@ -109,7 +131,6 @@ async def _serialize_post(db: AsyncSession, post: MomentPost, user: User) -> Mom
         .where(MomentComment.post_id == post.id)
         .order_by(MomentComment.id.asc())
     )
-    me_name, _ = await _profile_name(db, user.id)
     comments: list[MomentCommentOut] = []
     for cm in cm_rows.scalars().all():
         cname = None
@@ -143,6 +164,7 @@ async def _serialize_post(db: AsyncSession, post: MomentPost, user: User) -> Mom
         content=post.content or "",
         images=images,
         likes=likes,
+        liked_by_me=liked_by_me,
         comments=comments,
         created_at=to_utc_iso(post.created_at) or "",
     )
@@ -202,6 +224,35 @@ async def create_moment(
     return await _serialize_post(db, post, user)
 
 
+@router.post("/{post_id}/like")
+async def toggle_like(
+    post_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """用户点赞 / 取消点赞（自己的或联系人的动态均可）。"""
+    post = await db.get(MomentPost, post_id)
+    if not post or post.user_id != user.id:
+        raise HTTPException(status_code=404, detail="动态不存在")
+
+    existing = (
+        await db.execute(
+            select(MomentUserLike).where(
+                MomentUserLike.post_id == post.id, MomentUserLike.user_id == user.id
+            )
+        )
+    ).scalar_one_or_none()
+
+    if existing:
+        await db.delete(existing)
+        await db.commit()
+        return {"liked": False}
+
+    db.add(MomentUserLike(post_id=post.id, user_id=user.id, created_at=utc_now()))
+    await db.commit()
+    return {"liked": True}
+
+
 @router.post("/{post_id}/comments", response_model=MomentCommentOut)
 async def create_comment(
     post_id: int,
@@ -209,10 +260,14 @@ async def create_comment(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> MomentCommentOut:
-    """用户评论或回复联系人评论。"""
+    """用户评论动态，或回复联系人的评论。"""
     post = await db.get(MomentPost, post_id)
     if not post or post.user_id != user.id:
         raise HTTPException(status_code=404, detail="动态不存在")
+
+    text = body.content.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="评论不能为空")
 
     parent = None
     contact_id_for_reply = None
@@ -222,45 +277,24 @@ async def create_comment(
             raise HTTPException(status_code=400, detail="父评论不存在")
         if parent.author_type != "contact" or not parent.contact_id:
             raise HTTPException(status_code=400, detail="只能回复联系人的评论")
-        # 仅允许回复「首评」或联系人楼（简化：parent 必须是联系人评论）
         contact_id_for_reply = parent.contact_id
-        # 用户对该首评楼是否已回过
-        root = parent if parent.parent_id is None else await db.get(MomentComment, parent.parent_id)
-        root_id = root.id if root else parent.id
-        existing = await db.execute(
-            select(MomentComment).where(
-                MomentComment.post_id == post.id,
-                MomentComment.author_type == "user",
-                MomentComment.parent_id == root_id,
-            )
-        )
-        # 也允许挂在联系人首评 id 上
-        if parent.parent_id is None:
-            existing2 = await db.execute(
-                select(MomentComment).where(
-                    MomentComment.post_id == post.id,
-                    MomentComment.author_type == "user",
-                    MomentComment.parent_id == parent.id,
-                )
-            )
-            if existing2.scalar_one_or_none() or existing.scalar_one_or_none():
-                raise HTTPException(status_code=400, detail="已回复过该评论")
-        elif existing.scalar_one_or_none():
-            raise HTTPException(status_code=400, detail="已回复过该评论")
+    elif post.author_type == "contact" and post.contact_id:
+        # 用户直接评论联系人动态 → 联系人稍后回复
+        contact_id_for_reply = post.contact_id
 
     cm = MomentComment(
         post_id=post.id,
         author_type="user",
         contact_id=None,
         parent_id=body.parent_id,
-        content=body.content.strip(),
+        content=text,
         created_at=utc_now(),
     )
     db.add(cm)
     await db.commit()
     await db.refresh(cm)
 
-    if contact_id_for_reply and body.parent_id is not None:
+    if contact_id_for_reply:
         await enqueue_reply_to_user(
             db,
             user_id=user.id,

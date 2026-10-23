@@ -210,6 +210,12 @@ export async function commentMoment(postId, content, parentId = null) {
   return data
 }
 
+/** 切换点赞 */
+export async function toggleMomentLike(postId) {
+  const { data } = await client.post(`/api/moments/${postId}/like`)
+  return data
+}
+
 export async function deleteMoment(postId) {
   await client.delete(`/api/moments/${postId}`)
 }

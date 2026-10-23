@@ -205,32 +205,32 @@ async def execute_moment_job(db: AsyncSession, job: MomentJob) -> None:
                 job.updated_at = utc_now()
                 await db.commit()
                 return
-            # 找首评
-            root_id = user_cmt.parent_id or user_cmt.id
-            root = await db.get(MomentComment, root_id)
-            if not root:
-                job.status = "failed"
-                job.error = "首评不存在"
-                job.updated_at = utc_now()
-                await db.commit()
-                return
-            # 该楼下联系人是否已再回过（除首评外）
-            extra = await db.execute(
+            # 同一条用户评论下，该联系人是否已回过
+            already = await db.execute(
                 select(MomentComment).where(
                     MomentComment.post_id == post.id,
                     MomentComment.contact_id == contact.id,
                     MomentComment.author_type == "contact",
-                    MomentComment.parent_id.is_not(None),
+                    MomentComment.parent_id == user_cmt.id,
                 )
             )
-            if list(extra.scalars().all()):
+            if already.scalar_one_or_none():
                 job.status = "done"
                 job.updated_at = utc_now()
                 await db.commit()
                 return
+
+            if user_cmt.parent_id is None:
+                # 用户直接评论联系人动态
+                prior = (post.content or "").strip()[:200] or "（这条动态）"
+                user_text = user_cmt.content
+            else:
+                root = await db.get(MomentComment, user_cmt.parent_id)
+                prior = (root.content if root else "") or ""
+                user_text = user_cmt.content
             try:
                 text = await moment_ai.generate_reply_to_user(
-                    db, contact, post, root.content, user_cmt.content
+                    db, contact, post, prior, user_text
                 )
             except DeepSeekError:
                 text = "嗯嗯"
