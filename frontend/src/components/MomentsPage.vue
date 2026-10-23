@@ -1,26 +1,17 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import {
-  commentMoment,
-  createMoment,
-  deleteMoment,
-  listMoments,
-} from '../api/client'
+import { commentMoment, deleteMoment, listMoments } from '../api/client'
+import { hasMomentDraft } from '../utils/momentDraft'
 import { formatShanghai } from '../utils/beijingTime'
 
-const emit = defineEmits(['back'])
+const emit = defineEmits(['compose'])
 
 const posts = ref([])
 const loading = ref(false)
 const error = ref('')
-const composing = ref(false)
-const draftText = ref('')
-const draftFiles = ref([])
-const draftPreviews = ref([])
-const fileInput = ref(null)
-const saving = ref(false)
-const replyDraft = ref({}) // commentId -> text
+const replyDraft = ref({})
 const pollTimer = ref(null)
+const draftBadge = ref(hasMomentDraft())
 
 const likeNames = computed(() => (post) => (post.likes || []).map((l) => l.contact_name).join('、'))
 
@@ -40,6 +31,7 @@ async function refresh() {
   error.value = ''
   try {
     posts.value = await listMoments()
+    draftBadge.value = hasMomentDraft()
   } catch (e) {
     error.value = e.response?.data?.detail || e.message || '加载失败'
   } finally {
@@ -47,43 +39,7 @@ async function refresh() {
   }
 }
 
-function openCompose() {
-  composing.value = true
-  draftText.value = ''
-  draftFiles.value = []
-  draftPreviews.value = []
-}
-
-function pickImages() {
-  fileInput.value?.click()
-}
-
-function onFiles(e) {
-  const list = Array.from(e.target.files || [])
-  e.target.value = ''
-  const next = [...draftFiles.value, ...list].slice(0, 9)
-  draftPreviews.value.forEach((u) => URL.revokeObjectURL(u))
-  draftFiles.value = next
-  draftPreviews.value = next.map((f) => URL.createObjectURL(f))
-}
-
-async function submitPost() {
-  if (!draftText.value.trim() && !draftFiles.value.length) {
-    error.value = '请填写文字或添加图片'
-    return
-  }
-  saving.value = true
-  error.value = ''
-  try {
-    await createMoment(draftText.value.trim(), draftFiles.value)
-    composing.value = false
-    await refresh()
-  } catch (e) {
-    error.value = e.response?.data?.detail || e.message || '发布失败'
-  } finally {
-    saving.value = false
-  }
-}
+defineExpose({ refresh })
 
 async function removePost(post) {
   if (post.author_type !== 'user') return
@@ -96,11 +52,6 @@ function rootComments(post) {
   return (post.comments || []).filter((c) => !c.parent_id)
 }
 
-function childComments(post, parentId) {
-  return (post.comments || []).filter((c) => c.parent_id === parentId)
-}
-
-/** 展开某条首评下的全部回复（含嵌套再回） */
 function threadUnder(post, root) {
   const all = post.comments || []
   const out = []
@@ -134,56 +85,27 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (pollTimer.value) clearInterval(pollTimer.value)
-  draftPreviews.value.forEach((u) => URL.revokeObjectURL(u))
 })
 </script>
 
 <template>
   <div class="moments-page">
     <header class="nav">
-      <button type="button" class="back" aria-label="返回" @click="emit('back')">
-        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M15 18l-6-6 6-6" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-      </button>
+      <span class="nav-spacer" />
       <h1 class="title">朋友圈</h1>
-      <button type="button" class="camera" title="发朋友圈" @click="openCompose">
+      <button type="button" class="camera" title="发朋友圈" @click="emit('compose')">
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8">
           <path d="M4 8h3l2-2h6l2 2h3v11H4V8z" stroke-linejoin="round" />
           <circle cx="12" cy="13" r="3.5" />
         </svg>
+        <span v-if="draftBadge" class="draft-dot" title="有草稿" />
       </button>
     </header>
 
-    <div v-if="composing" class="compose-mask" @click.self="composing = false">
-      <div class="compose-card">
-        <h2>发朋友圈</h2>
-        <textarea v-model="draftText" rows="4" maxlength="500" placeholder="这一刻的想法…" />
-        <div class="preview-grid">
-          <img v-for="(u, i) in draftPreviews" :key="i" :src="u" alt="" />
-          <button
-            v-if="draftFiles.length < 9"
-            type="button"
-            class="add-img"
-            @click="pickImages"
-          >
-            +
-          </button>
-        </div>
-        <input ref="fileInput" type="file" accept="image/*" multiple hidden @change="onFiles" />
-        <p v-if="error" class="err">{{ error }}</p>
-        <div class="actions">
-          <button type="button" class="ghost" @click="composing = false">取消</button>
-          <button type="button" class="primary" :disabled="saving" @click="submitPost">
-            {{ saving ? '发布中…' : '发表' }}
-          </button>
-        </div>
-      </div>
-    </div>
-
     <div class="feed">
-      <p v-if="loading && !posts.length" class="hint">加载中…</p>
-      <p v-else-if="!posts.length" class="hint">还没有动态，点右上角发一条吧</p>
+      <p v-if="error" class="hint err">{{ error }}</p>
+      <p v-else-if="loading && !posts.length" class="hint">加载中…</p>
+      <p v-else-if="!posts.length" class="hint">还没有动态，点右上角相机发一条吧</p>
       <article v-for="post in posts" :key="post.id" class="post">
         <img :src="post.author_avatar || '/default-avatar.svg'" alt="" class="avatar" />
         <div class="body">
@@ -209,17 +131,10 @@ onUnmounted(() => {
               <p class="cmt">
                 <b>{{ root.author_name }}</b>：{{ root.content }}
               </p>
-              <p
-                v-for="ch in threadUnder(post, root)"
-                :key="ch.id"
-                class="cmt sub"
-              >
+              <p v-for="ch in threadUnder(post, root)" :key="ch.id" class="cmt sub">
                 <b>{{ ch.author_name }}</b>：{{ ch.content }}
               </p>
-              <div
-                v-if="root.author_type === 'contact'"
-                class="reply-row"
-              >
+              <div v-if="root.author_type === 'contact'" class="reply-row">
                 <input
                   v-model="replyDraft[root.id]"
                   type="text"
@@ -231,7 +146,7 @@ onUnmounted(() => {
               </div>
             </div>
           </div>
-          <p v-else class="pending">联系人正在赶来点赞评论…</p>
+          <p v-else-if="post.author_type === 'user'" class="pending">联系人正在赶来点赞评论…</p>
         </div>
       </article>
     </div>
@@ -252,14 +167,30 @@ onUnmounted(() => {
   padding: 10px 12px;
   background: #ededed;
   border-bottom: 1px solid #ddd;
+  flex-shrink: 0;
 }
-.back,
+.nav-spacer {
+  width: 36px;
+}
 .camera {
+  position: relative;
   border: none;
   background: none;
   padding: 4px;
   cursor: pointer;
   color: #111;
+  width: 36px;
+  display: flex;
+  justify-content: flex-end;
+}
+.draft-dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fa5151;
 }
 .title {
   margin: 0;
@@ -276,6 +207,9 @@ onUnmounted(() => {
   color: #888;
   font-size: 13px;
   padding: 40px 16px;
+}
+.hint.err {
+  color: #fa5151;
 }
 .post {
   display: flex;
@@ -392,78 +326,5 @@ onUnmounted(() => {
   margin: 0;
   font-size: 12px;
   color: #aaa;
-}
-.compose-mask {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.45);
-  z-index: 40;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-}
-.compose-card {
-  width: 100%;
-  max-width: 520px;
-  background: #fff;
-  border-radius: 12px 12px 0 0;
-  padding: 16px;
-}
-.compose-card h2 {
-  margin: 0 0 10px;
-  font-size: 16px;
-}
-.compose-card textarea {
-  width: 100%;
-  border: 1px solid #e5e5e5;
-  border-radius: 8px;
-  padding: 10px;
-  font-size: 15px;
-  resize: vertical;
-  box-sizing: border-box;
-}
-.preview-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 12px 0;
-}
-.preview-grid img,
-.add-img {
-  width: 72px;
-  height: 72px;
-  border-radius: 6px;
-  object-fit: cover;
-}
-.add-img {
-  border: 1px dashed #ccc;
-  background: #fafafa;
-  font-size: 28px;
-  color: #999;
-  cursor: pointer;
-}
-.actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-}
-.ghost,
-.primary {
-  border: none;
-  border-radius: 8px;
-  padding: 8px 16px;
-  font-size: 14px;
-  cursor: pointer;
-}
-.ghost {
-  background: #f0f0f0;
-}
-.primary {
-  background: #07c160;
-  color: #fff;
-}
-.err {
-  color: #fa5151;
-  font-size: 13px;
 }
 </style>
