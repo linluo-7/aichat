@@ -14,7 +14,6 @@ const emit = defineEmits(['back', 'published'])
 const text = ref('')
 /** @type {import('vue').Ref<Array<{ name: string, type: string, dataUrl: string }>>} */
 const images = ref([])
-const fileInput = ref(null)
 const saving = ref(false)
 const error = ref('')
 const hydrated = ref(false)
@@ -43,17 +42,18 @@ onUnmounted(() => {
   }
 })
 
-function pickImages() {
-  fileInput.value?.click()
-}
-
 async function onFiles(e) {
   const list = Array.from(e.target.files || [])
   e.target.value = ''
+  if (!list.length) return
   const room = 9 - images.value.length
   const take = list.slice(0, room)
-  const converted = await Promise.all(take.map((f) => fileToDraftImage(f)))
-  images.value = [...images.value, ...converted]
+  try {
+    const converted = await Promise.all(take.map((f) => fileToDraftImage(f)))
+    images.value = [...images.value, ...converted]
+  } catch (err) {
+    error.value = err?.message || '读取图片失败'
+  }
 }
 
 function removeImage(idx) {
@@ -123,9 +123,18 @@ async function submit() {
           <img :src="img.dataUrl" alt="" />
           <button type="button" class="rm" aria-label="删除" @click="removeImage(i)">×</button>
         </div>
-        <button v-if="images.length < 9" type="button" class="cell add" @click="pickImages">+</button>
+        <!-- 用 label + 透明 input，避免 hidden 在移动端无法唤起相册 -->
+        <label v-if="images.length < 9" class="cell add" aria-label="添加图片">
+          <span class="plus" aria-hidden="true">+</span>
+          <input
+            type="file"
+            class="file-hit"
+            accept="image/*"
+            multiple
+            @change="onFiles"
+          />
+        </label>
       </div>
-      <input ref="fileInput" type="file" accept="image/*" multiple hidden @change="onFiles" />
       <p v-if="error" class="err">{{ error }}</p>
       <p class="hint">未发完可退出并保存草稿，下次进入自动恢复</p>
     </div>
@@ -209,9 +218,25 @@ textarea {
 .cell.add {
   border: 1px dashed #ccc;
   background: #fafafa;
-  font-size: 32px;
   color: #bbb;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cell.add .plus {
+  font-size: 32px;
+  line-height: 1;
+  pointer-events: none;
+}
+.cell.add .file-hit {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  font-size: 0;
 }
 .rm {
   position: absolute;
