@@ -8,6 +8,7 @@ import ProfileSettingsModal from './components/ProfileSettingsModal.vue'
 import ContactDetailPage from './components/ContactDetailPage.vue'
 import EditContactModal from './components/EditContactModal.vue'
 import MemoryPage from './components/MemoryPage.vue'
+import MomentsPage from './components/MomentsPage.vue'
 import UpdatePrompt from './components/UpdatePrompt.vue'
 import { useMobile } from './composables/useMobile'
 import { useSync } from './composables/useSync'
@@ -25,16 +26,21 @@ const showProfile = ref(false)
 const detailContactId = ref(null)
 const editContactId = ref(null)
 const memoryContactId = ref(null)
+const showMoments = ref(false)
 const syncEnabled = computed(() => auth.isLoggedIn)
 
 const showSidebar = computed(
   () =>
     !isMobile.value ||
-    (!store.activeContactId && detailContactId.value == null && memoryContactId.value == null),
+    (!showMoments.value &&
+      !store.activeContactId &&
+      detailContactId.value == null &&
+      memoryContactId.value == null),
 )
 const showMainPane = computed(
   () =>
     !isMobile.value ||
+    showMoments.value ||
     !!store.activeContactId ||
     detailContactId.value != null ||
     memoryContactId.value != null,
@@ -78,6 +84,7 @@ function onUnauthorized() {
   editContactId.value = null
   showProfile.value = false
   showCreate.value = false
+  showMoments.value = false
 }
 
 async function afterLogin() {
@@ -115,11 +122,13 @@ onUnmounted(() => {
       :class="{ 'pane-full': isMobile }"
       @create="openCreate"
       @profile="showProfile = true"
+      @moments="showMoments = true"
     />
 
     <main v-show="showMainPane" class="wx-chat-main" :class="{ 'pane-full': isMobile }">
+      <MomentsPage v-if="showMoments" @back="showMoments = false" />
       <MemoryPage
-        v-if="memoryContactId != null"
+        v-else-if="memoryContactId != null"
         :contact-id="memoryContactId"
         :contact-name="store.contacts.find((c) => c.id === memoryContactId)?.name || ''"
         @back="closeMemory"

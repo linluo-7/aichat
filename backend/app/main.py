@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.database import AsyncSessionLocal, Base, engine
-from app.routers import auth, contacts, memories, messages, profile, sync
+from app.routers import auth, contacts, memories, messages, moments, profile, sync
 from app.services.migrate import ensure_v2_all
 from app.services.ownership import assign_orphan_data_to_admin
 from app.services.reply_worker import start_worker, stop_worker
@@ -49,6 +49,7 @@ app.include_router(contacts.router)
 app.include_router(messages.router)
 app.include_router(sync.router)
 app.include_router(memories.router)
+app.include_router(moments.router)
 
 app.mount("/uploads", StaticFiles(directory=str(settings.upload_dir)), name="uploads")
 

@@ -185,4 +185,33 @@ export async function consolidateMemories(contactId) {
   return data
 }
 
+/** 朋友圈列表 */
+export async function listMoments() {
+  const { data } = await client.get('/api/moments')
+  return data
+}
+
+/** 发朋友圈：content 文字 + files 图片数组 */
+export async function createMoment(content, files = []) {
+  const form = new FormData()
+  form.append('content', content || '')
+  for (const f of files) {
+    form.append('files', f)
+  }
+  const { data } = await client.post('/api/moments', form)
+  return data
+}
+
+export async function commentMoment(postId, content, parentId = null) {
+  const { data } = await client.post(`/api/moments/${postId}/comments`, {
+    content,
+    parent_id: parentId,
+  })
+  return data
+}
+
+export async function deleteMoment(postId) {
+  await client.delete(`/api/moments/${postId}`)
+}
+
 export default client

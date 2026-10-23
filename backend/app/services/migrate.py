@@ -76,11 +76,17 @@ def ensure_v3_auth_columns(sync_conn: Connection) -> None:
     sync_conn.execute(text("CREATE INDEX IF NOT EXISTS ix_contacts_user_id ON contacts (user_id)"))
 
 
+def ensure_v4_moment_columns(sync_conn: Connection) -> None:
+    """V4：联系人朋友圈调度字段。"""
+    _add_columns(sync_conn, "contacts", [("moment_next_at", "DATETIME")])
+
+
 def ensure_v2_all(sync_conn: Connection) -> None:
-    """执行全部 V2/V3 轻量迁移（表由 metadata.create_all 创建）。"""
+    """执行全部 V2/V3/V4 轻量迁移（表由 metadata.create_all 创建）。"""
     ensure_message_attachment_columns(sync_conn)
     ensure_contact_mobile_background_column(sync_conn)
     ensure_contact_auto_message_columns(sync_conn)
     ensure_v2_contact_columns(sync_conn)
     ensure_message_contact_id_index(sync_conn)
     ensure_v3_auth_columns(sync_conn)
+    ensure_v4_moment_columns(sync_conn)

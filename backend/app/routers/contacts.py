@@ -79,12 +79,16 @@ async def create_contact(
     db: AsyncSession = Depends(get_db),
 ) -> ContactOut:
     """创建新联系人。"""
+    from datetime import timedelta
+    import random
+
     contact = Contact(
         user_id=user.id,
         name=body.name.strip(),
         persona=body.persona.strip(),
         api_key=body.api_key.strip(),
         memory_enabled=True,
+        moment_next_at=utc_now() + timedelta(seconds=random.randint(3600, 10800)),
     )
     db.add(contact)
     await db.commit()

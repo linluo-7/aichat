@@ -95,8 +95,16 @@ async def _post_chat(
 
 
 def _message_content(msg: dict[str, Any]) -> str:
-    """从 assistant message 取出文本 content。"""
+    """从 assistant message 取出文本 content（忽略多模态结构）。"""
     content = msg.get("content")
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(str(block.get("text") or ""))
+            elif isinstance(block, str):
+                parts.append(block)
+        return "".join(parts)
     if content is None:
         return ""
     return str(content)

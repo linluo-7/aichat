@@ -7,10 +7,11 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.database import AsyncSessionLocal
-from app.models import Contact, Message, ReplyJob
+from app.models import Contact, Message, MomentJob, ReplyJob
+from app.services import moment_jobs as moment_jobs_svc
 from app.services import reply_jobs as jobs_svc
 from app.services.bubbles import split_bubbles, typing_delay_ms
-from app.services.context_builder import build_llm_messages
+from app.services.context_builder import build_llm_messages, content_as_plain_text
 from app.services.deepseek import DeepSeekError, chat_completion, chat_completion_with_web
 from app.services.llm_profiles import resolve_model_params
 from app.services.memory_extract import run_extract_for_contact, should_extract
@@ -25,6 +26,7 @@ _stop_event: asyncio.Event | None = None
 _semaphore: asyncio.Semaphore | None = None
 _auto_tick = 0
 _memory_tick = 0
+_moment_post_tick = 0
 
 
 async def _execute_job(job_id: int) -> None:
@@ -72,9 +74,11 @@ async def _execute_job(job_id: int) -> None:
                     # 取最近一条用户话，作为搜索的 ori_question
                     ori_q = None
                     for m in reversed(llm_messages):
-                        if m.get("role") == "user" and (m.get("content") or "").strip():
-                            ori_q = str(m["content"]).strip()[:128]
-                            break
+                        if m.get("role") == "user":
+                            plain = content_as_plain_text(m.get("content"))
+                            if plain.strip():
+                                ori_q = plain.strip()[:128]
+                                break
 
                     if settings.web_tools_enabled:
                         raw = await chat_completion_with_web(
@@ -162,13 +166,28 @@ async def _execute_job(job_id: int) -> None:
 
 
 async def _process_one_claimed() -> bool:
-    """领取并执行一条任务；有任务返回 True。"""
+    """领取并执行一条回复任务；有任务返回 True。"""
     async with AsyncSessionLocal() as db:
         job = await jobs_svc.claim_next_job(db)
         if not job:
             return False
         job_id = job.id
     await _execute_job(job_id)
+    return True
+
+
+async def _process_one_moment_job() -> bool:
+    """领取并执行一条朋友圈任务。"""
+    async with AsyncSessionLocal() as db:
+        job = await moment_jobs_svc.claim_next_moment_job(db)
+        if not job:
+            return False
+        job_id = job.id
+    async with AsyncSessionLocal() as db:
+        job = await db.get(MomentJob, job_id)
+        if not job or job.status != "running":
+            return True
+        await moment_jobs_svc.execute_moment_job(db, job)
     return True
 
 
@@ -222,22 +241,30 @@ async def _run_memory_pass() -> None:
 
 
 async def _worker_loop() -> None:
-    """主循环：每秒领取任务；每 30 秒自动消息；每 60 秒记忆整理。"""
-    global _auto_tick, _memory_tick
+    """主循环：回复任务 + 朋友圈任务；定时自动消息/记忆/联系人发动态。"""
+    global _auto_tick, _memory_tick, _moment_post_tick
     assert _stop_event is not None
     logger.info("reply_worker 已启动")
     while not _stop_event.is_set():
         try:
             worked = await _process_one_claimed()
+            moment_worked = await _process_one_moment_job()
             _auto_tick += 1
             _memory_tick += 1
+            _moment_post_tick += 1
             if _auto_tick >= 30:
                 _auto_tick = 0
                 await _schedule_auto_messages()
             if _memory_tick >= 60:
                 _memory_tick = 0
                 await _run_memory_pass()
-            if not worked:
+            if _moment_post_tick >= 90:
+                _moment_post_tick = 0
+                async with AsyncSessionLocal() as db:
+                    n = await moment_jobs_svc.schedule_contact_moment_posts(db)
+                    if n:
+                        logger.info("联系人新发朋友圈 %s 条", n)
+            if not worked and not moment_worked:
                 try:
                     await asyncio.wait_for(_stop_event.wait(), timeout=1.0)
                 except asyncio.TimeoutError:
@@ -250,13 +277,17 @@ async def _worker_loop() -> None:
 
 async def start_worker() -> None:
     """应用启动时调用：恢复 running 任务并启动循环。"""
-    global _worker_task, _stop_event, _semaphore, _auto_tick, _memory_tick
+    global _worker_task, _stop_event, _semaphore, _auto_tick, _memory_tick, _moment_post_tick
     _auto_tick = 0
     _memory_tick = 0
+    _moment_post_tick = 0
     async with AsyncSessionLocal() as db:
         n = await jobs_svc.recover_running_jobs(db)
         if n:
             logger.info("恢复 running 任务 %s 条", n)
+        m = await moment_jobs_svc.recover_running_moment_jobs(db)
+        if m:
+            logger.info("恢复朋友圈 running 任务 %s 条", m)
     _stop_event = asyncio.Event()
     _semaphore = asyncio.Semaphore(2)
     _worker_task = asyncio.create_task(_worker_loop(), name="reply_worker")

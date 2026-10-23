@@ -109,6 +109,9 @@ class Contact(Base):
     memory_enabled: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="1", comment="是否启用记忆"
     )
+    moment_next_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, comment="下次可发朋友圈时间"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -222,3 +225,101 @@ class MemoryState(Base):
     digest: Mapped[str | None] = mapped_column(Text, nullable=True)
     digest_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     digest_stale: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+
+
+class MomentPost(Base):
+    """【朋友圈】动态表。"""
+
+    __tablename__ = "moment_posts"
+    __table_args__ = (Index("ix_moment_posts_user_id_id", "user_id", "id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, comment="所属账号"
+    )
+    author_type: Mapped[str] = mapped_column(
+        String(16), nullable=False, comment="user / contact"
+    )
+    contact_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("contacts.id", ondelete="CASCADE"), nullable=True, comment="联系人作者"
+    )
+    content: Mapped[str] = mapped_column(Text, default="", comment="正文")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class MomentImage(Base):
+    """【朋友圈】动态图片。"""
+
+    __tablename__ = "moment_images"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    post_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("moment_posts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    url: Mapped[str] = mapped_column(String(512), nullable=False, comment="图片 URL")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+
+class MomentLike(Base):
+    """【朋友圈】点赞（联系人）。"""
+
+    __tablename__ = "moment_likes"
+    __table_args__ = (Index("uq_moment_likes_post_contact", "post_id", "contact_id", unique=True),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    post_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("moment_posts.id", ondelete="CASCADE"), nullable=False
+    )
+    contact_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("contacts.id", ondelete="CASCADE"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class MomentComment(Base):
+    """【朋友圈】评论（首评 / 回复）。"""
+
+    __tablename__ = "moment_comments"
+    __table_args__ = (Index("ix_moment_comments_post_id", "post_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    post_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("moment_posts.id", ondelete="CASCADE"), nullable=False
+    )
+    author_type: Mapped[str] = mapped_column(String(16), nullable=False, comment="user / contact")
+    contact_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("contacts.id", ondelete="CASCADE"), nullable=True
+    )
+    parent_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("moment_comments.id", ondelete="CASCADE"), nullable=True, comment="父评论"
+    )
+    content: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class MomentJob(Base):
+    """【朋友圈】延迟互动任务。"""
+
+    __tablename__ = "moment_jobs"
+    __table_args__ = (Index("ix_moment_jobs_status_run_after", "status", "run_after"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
+    post_id: Mapped[int] = mapped_column(Integer, ForeignKey("moment_posts.id", ondelete="CASCADE"))
+    contact_id: Mapped[int] = mapped_column(Integer, ForeignKey("contacts.id", ondelete="CASCADE"))
+    job_type: Mapped[str] = mapped_column(
+        String(32), nullable=False, comment="like_and_root / reply_user"
+    )
+    target_comment_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("moment_comments.id", ondelete="SET NULL"), nullable=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), default="pending", server_default="pending", comment="pending/running/done/failed"
+    )
+    run_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    error: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

@@ -4,7 +4,7 @@ import { useChatStore } from '../stores/chat'
 import { useProfileStore } from '../stores/profile'
 import { formatSessionTime } from '../utils/sessionTime'
 
-const emit = defineEmits(['create', 'profile'])
+const emit = defineEmits(['create', 'profile', 'moments'])
 
 const store = useChatStore()
 const profile = useProfileStore()
@@ -30,11 +30,19 @@ function previewText(contact) {
   <aside class="wx-session">
     <div class="list-top-bar">
       <h1 class="list-title">聊天</h1>
-      <button type="button" class="top-add-btn" title="添加联系人" @click="emit('create')">
-        <svg viewBox="0 0 16 16" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path d="M8 3v10M3 8h10" stroke-linecap="round" />
-        </svg>
-      </button>
+      <div class="top-actions">
+        <button type="button" class="top-add-btn" title="朋友圈" @click="emit('moments')">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6">
+            <circle cx="12" cy="12" r="8" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+        </button>
+        <button type="button" class="top-add-btn" title="添加联系人" @click="emit('create')">
+          <svg viewBox="0 0 16 16" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M8 3v10M3 8h10" stroke-linecap="round" />
+          </svg>
+        </button>
+      </div>
     </div>
     <header class="session-header">
       <div class="search-wrap">
@@ -44,6 +52,12 @@ function previewText(contact) {
         </svg>
         <input v-model="keyword" type="text" placeholder="搜索" />
       </div>
+      <button type="button" class="add-icon" title="朋友圈" @click="emit('moments')">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6">
+          <circle cx="12" cy="12" r="8" />
+          <circle cx="12" cy="12" r="3" />
+        </svg>
+      </button>
       <button type="button" class="add-icon" title="添加联系人" @click="emit('create')">
         <svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5">
           <path d="M8 3v10M3 8h10" stroke-linecap="round" />
@@ -292,16 +306,22 @@ function previewText(contact) {
     color: var(--wx-text);
   }
 
-  .top-add-btn {
+  .top-actions {
     position: absolute;
-    right: max(12px, env(safe-area-inset-right, 0px));
+    right: max(4px, env(safe-area-inset-right, 0px));
     top: env(safe-area-inset-top, 0px);
     bottom: 0;
     margin: auto 0;
+    display: flex;
+    align-items: center;
+    height: 44px;
+  }
+
+  .top-add-btn {
     border: none;
     background: none;
     color: #191919;
-    min-width: 44px;
+    min-width: 40px;
     min-height: 44px;
     display: flex;
     align-items: center;
